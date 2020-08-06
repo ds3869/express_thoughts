@@ -268,6 +268,32 @@ def scaler(se, scaler_max, scaler_min):
 
     return res
 
+
+# 把最新一期的股票池数据写入txt文件，以便wind导入“我的股票池”模块
+def add_stock_pool_txt(stocks_list, save_name, pool_to_wind_path=None, renew=False):
+    '''
+    如果有重复的股票，wind导入时会自动过滤掉。
+    在txt文件中，有空行不影响导入，但是没有换行，会影响导入
+    '''
+    if not pool_to_wind_path:
+        pool_to_wind_path = r'D:\pythoncode\IndexEnhancement\股票池'
+    if renew:
+        if os.path.exists(os.path.join(pool_to_wind_path, save_name + '.txt')):
+            os.remove(os.path.join(pool_to_wind_path, save_name + '.txt'))
+
+    if not os.path.exists(pool_to_wind_path):
+        os.makedirs(pool_to_wind_path)
+
+    # 打开模式a+：打开一个文件用于读写。如果该文件已存在，文件指针将会放在文件的结尾。
+    # 文件打开时会是追加模式。如果该文件不存在，创建新文件用于读写。
+    f = open(os.path.join(pool_to_wind_path, save_name + '.txt'), "a+")
+    pool = f.readlines()
+    for s in stocks_list:
+        pool.append(s+"\n")
+    f.writelines(pool)
+    f.close()  # 关闭文件
+
+    
 if __name__ == "__main__":
     # 测试代码
     data = Data()
