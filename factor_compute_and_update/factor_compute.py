@@ -24,22 +24,20 @@ class Factor_Compute(CALFUNC):
     def __init__(self, status):
         super().__init__()
         # status = 'update' 表示仅对已有的因子值进行更新， ='all' 表示全部重新计算
-        self.__mes = generate_months_ends()
-        self.__status = status
-        # 若status = 'update' ，该值表示从哪个月份开始计算更新的因子
-        self.__to_update_month_list = None
-        self.__latest_dt = None          # 因子表中的最后一列日期
-        if self.__status == 'update':
-            self.__get_update_month()
+        self._mes = generate_months_ends()
+        self._status = status
 
-    def __get_update_month(self):
-        factor_m = self.RETURN_12M
+    def _get_update_month(self, fn):
+        factor_m = eval('self.' + fn)
+        # factor_m = self.RETURN_12M
         last_dt = factor_m.columns[-1]
-        self.__latest_dt = last_dt
-        self.__to_update_month_list = [i for i in self.__mes if i > last_dt]
-        if len(self.__to_update_month_list) == 0:
-            print('没有更新必要，退出')
-            sys.exit()
+        to_update_month_list = [i for i in self._mes if i > last_dt]
+        if len(to_update_month_list) == 0:
+            print('没有更新必要')
+            return None
+            # sys.exit()
+        else:
+            return to_update_month_list
 
     @lazyproperty
     def compute_pct_chg_nm(self):
@@ -47,9 +45,8 @@ class Factor_Compute(CALFUNC):
         pct = self.changepct_daily
         pct = 1 + pct/100
 
-        # todo 还是等实习生写完吧
-        if self.__status == 'all' or self.__status == 'update':
-            mes1 = [m for m in self.__mes if m in pct.columns]
+        if self._status == 'all':
+            mes1 = [m for m in self._mes if m in pct.columns]
             pct_chg = pd.DataFrame()
             for m in mes1:
                 cols = [c for c in pct.columns if c.year == m.year and c.month == m.month]
@@ -61,11 +58,12 @@ class Factor_Compute(CALFUNC):
             pct_chg = pct_chg * 100
             pct_chg_nm = pct_chg.shift(-1, axis=1)
             pct_chg_nm = CALFUNC.del_dat_early_than(pct_chg_nm, START_YEAR)
-        elif self.status == 'update11':
-            # todo 先读取历史的因子值，再删除可能存在的不是月末的列，再逐月的计算
-            pct_chg_nm = self.pct_chg_nm
+        elif self._status == 'update':
+            new_mes = self._get_update_month('PCT_CHG_NM')
+            if not new_mes:
+                return None
 
-            for m in self.to_update_month_list:
+            for m in new_mes:
                 cols = [c for c in pct.columns if c.year == m.year and c.month == m.month]
                 tmp_df = pct[cols]
                 tmp_cum = tmp_df.cumprod(axis=1)
@@ -74,14 +72,13 @@ class Factor_Compute(CALFUNC):
 
         return pct_chg_nm
 
-    # todo 还是要debug运行一下
     @lazyproperty
     def is_open(self):
         open = self.openPrice_daily
         high = self.highprice_daily
         low = self.lowPrice_daily
 
-        if self.__status == 'all':
+        if self._status == 'all':
             # 不是停牌的
             is_open = ~pd.isna(open)
             # 不是开盘涨跌停的
@@ -93,17 +90,18 @@ class Factor_Compute(CALFUNC):
 
             is_open = CALFUNC.d_freq_to_m_freq(is_open, shift=True)
             is_open = CALFUNC.del_dat_early_than(is_open, START_YEAR)
-        elif self.status == 'update':
+        elif self._status == 'update':
             factor = self.IS_OPEN
             # 先删除过去计算的bug
-            to_del = [c for c in factor.columns if c not in self.__mes]
+            to_del = [c for c in factor.columns if c not in self._mes]
             factor.drop(to_del, axis=1, inplace=True)
 
+            latest_dt = factor.columns[-1]
             # 删除无用的日频数据
-            saved_cols = [i for i in open.columns if i > self.__latest_dt]
+            saved_cols = [i for i in open.columns if i > latest_dt]
             open = open[saved_cols]
-            high = open[saved_cols]
-            low = open[saved_cols]
+            high = high[saved_cols]
+            low = low[saved_cols]
 
             is_open = ~pd.isna(open)
             # 不是开盘涨跌停的
@@ -128,7 +126,7 @@ class Factor_Compute(CALFUNC):
         share_turnover = turnovervalue / totalmv
         share_turnover = share_turnover.T
 
-        new_mes = [m for m in self.__mes if m in share_turnover.columns]
+        new_mes = [m for m in self._mes if m in share_turnover.columns]
 
         def t_fun(tmp_df, freq=1):
             tmp_ar = tmp_df.values
@@ -176,7 +174,7 @@ class Factor_Compute(CALFUNC):
         new_index = [i for i in y.index if i in index_r.index]
         y = y.loc[new_index, :]
 
-        new_mes = [m for m in self.__mes if m in y.index and np.where(y.index == m)[0][0] > 504]
+        new_mes = [m for m in self._mes if m in y.index and np.where(y.index == m)[0][0] > 504]
 
         b, alpha, sigma = self._rolling_regress(y, index_r, window=504, half_life=252, target_date=new_mes)
 
@@ -238,7 +236,7 @@ class Factor_Compute(CALFUNC):
         # n分别为1、3、6、12，每个月为21个交易日
         pct = self.changepct_daily/100
 
-        new_mes = [m for m in self.__mes if m in pct.columns]
+        new_mes = [m for m in self._mes if m in pct.columns]
 
         std_1m = pd.DataFrame()
         std_3m = pd.DataFrame()
@@ -271,71 +269,81 @@ class Factor_Compute(CALFUNC):
 
         return res_dict
 
-    # @lazyproperty
-    # def reverse_nm(self):
-    #     '''
-    #     1）在每个月底，对于股票s，回溯其过去N个交易日的数据（为方便处理， N取偶数）；
-    #     2）对于股票s，逐日计算平均单笔成交金额D（D = 当日成交金额 / 当日成交笔数），将N个交易日按D值从大到小排序，前N/2
-    #       个交易日称为高D组，后N/2个交易日称为低D组；
-    #     3）对于股票s，将高D组交易日的涨跌幅加总[1]，得到因子M_high；将低D组交易日的涨跌幅加总，得到因子M_low；
-    #     4） 对于所有股票，分别按照上述流程计算因子值。
-    #     '''
-    #     # n为20、60、180
-    #     deals = self.turnoverdeals
-    #     turnovervalue = self.turnovervalue_daily  # 成交额（万元）
-    #     turnovervalue, deals = align(turnovervalue, deals)
-    #
-    #     value_per_deal = turnovervalue/deals
-    #     pct = self.changepct_daily / 100
-    #
-    #     value_per_deal, pct = align(value_per_deal, pct)
-    #
-    #     new_mes = [m for m in self.__mes if m in value_per_deal.columns]
-    #
-    #     reverse_20 = pd.DataFrame()
-    #     reverse_60 = pd.DataFrame()
-    #     reverse_180 = pd.DataFrame()
-    #
-    #     def _cal_M_reverse(series, pct_chg=None):
-    #         code = series.name
-    #         series = series.dropna()
-    #         if len(series) == 0:
-    #             return None
-    #
-    #         series = series.sort_values()
-    #         if len(series) % 2 == 1:
-    #             low_vals = series.iloc[:len(series) // 2 + 1]
-    #         else:
-    #             low_vals = series.iloc[:len(series) // 2]
-    #         high_vals = series.iloc[len(series) // 2:]
-    #         m_high = (pct_chg.loc[code, high_vals.index] + 1).cumprod().iloc[-1] - 1
-    #         m_low = (pct_chg.loc[code, low_vals.index] + 1).cumprod().iloc[-1] - 1
-    #         res = m_high - m_low
-    #
-    #         return res
-    #
-    #     for m in new_mes:
-    #         print(m)
-    #         loc = np.where(value_per_deal.columns == m)[0][0]
-    #         if loc > 180:
-    #             tmp_20 = value_per_deal.iloc[:, loc + 1 - 20:loc + 1].apply(_cal_M_reverse, axis=1, args=(pct,))
-    #             tmp_60 = value_per_deal.iloc[:, loc + 1 - 60:loc + 1].apply(_cal_M_reverse, axis=1, args=(pct,))
-    #             tmp_180 = value_per_deal.iloc[:, loc + 1 - 180:loc + 1].apply(_cal_M_reverse, axis=1, args=(pct,))
-    #
-    #             reverse_20 = pd.concat([reverse_20, pd.DataFrame({m: tmp_20})], axis=1)
-    #             reverse_60 = pd.concat([reverse_60, pd.DataFrame({m: tmp_60})], axis=1)
-    #             reverse_180 = pd.concat([reverse_180, pd.DataFrame({m: tmp_180})], axis=1)
-    #
-    #     reverse_20 = CALFUNC.del_dat_early_than(reverse_20, START_YEAR)
-    #     reverse_60 = CALFUNC.del_dat_early_than(reverse_60, START_YEAR)
-    #     reverse_180 = CALFUNC.del_dat_early_than(reverse_180, START_YEAR)
-    #
-    #     res_dict = {"Reverse_20": reverse_20,
-    #                 "Reverse_60": reverse_60,
-    #                 "Reverse_180": reverse_180,
-    #                 }
-    #
-    #     return res_dict
+    @lazyproperty
+    def reverse_nm(self):
+        '''
+        1）在每个月底，对于股票s，回溯其过去N个交易日的数据（为方便处理， N取偶数）；
+        2）对于股票s，逐日计算平均单笔成交金额D（D = 当日成交金额 / 当日成交笔数），将N个交易日按D值从大到小排序，前N/2
+          个交易日称为高D组，后N/2个交易日称为低D组；
+        3）对于股票s，将高D组交易日的涨跌幅加总[1]，得到因子M_high；将低D组交易日的涨跌幅加总，得到因子M_low；
+        4） 对于所有股票，分别按照上述流程计算因子值。
+        '''
+        # n为20、60、180
+        deals = self.turnoverdeals
+        turnovervalue = self.turnovervalue_daily  # 成交额（万元）
+        turnovervalue, deals = align(turnovervalue, deals)
+
+        value_per_deal = turnovervalue/deals
+        pct = self.changepct_daily / 100
+
+        value_per_deal, pct = align(value_per_deal, pct)
+
+        def _cal_M_reverse(series, pct_chg=None):
+            code = series.name
+            series = series.dropna()
+            if len(series) == 0:
+                return None
+
+            series = series.sort_values()
+            if len(series) % 2 == 1:
+                low_vals = series.iloc[:len(series) // 2 + 1]
+            else:
+                low_vals = series.iloc[:len(series) // 2]
+            high_vals = series.iloc[len(series) // 2:]
+            m_high = (pct_chg.loc[code, high_vals.index] + 1).cumprod().iloc[-1] - 1
+            m_low = (pct_chg.loc[code, low_vals.index] + 1).cumprod().iloc[-1] - 1
+            res = m_high - m_low
+
+            return res
+
+        if self._status == 'update':
+            new_mes = self._get_update_month('REVERSE_20')
+            # 若返回None，表示没有更新必要，因子计算函数同样返回None
+            if not new_mes:
+                return None
+
+            reverse_20 = self.REVERSE_20
+            reverse_60 = self.REVERSE_60
+            reverse_180 = self.REVERSE_180
+
+        elif self._status == 'all':
+            new_mes = [m for m in self._mes if m in value_per_deal.columns]
+            reverse_20 = pd.DataFrame()
+            reverse_60 = pd.DataFrame()
+            reverse_180 = pd.DataFrame()
+
+        for m in new_mes:
+            print(m)
+            loc = np.where(value_per_deal.columns == m)[0][0]
+            if loc > 180:
+                tmp_20 = value_per_deal.iloc[:, loc + 1 - 20:loc + 1].apply(_cal_M_reverse, axis=1, args=(pct,))
+                tmp_60 = value_per_deal.iloc[:, loc + 1 - 60:loc + 1].apply(_cal_M_reverse, axis=1, args=(pct,))
+                tmp_180 = value_per_deal.iloc[:, loc + 1 - 180:loc + 1].apply(_cal_M_reverse, axis=1, args=(pct,))
+
+                reverse_20 = pd.concat([reverse_20, pd.DataFrame({m: tmp_20})], axis=1)
+                reverse_60 = pd.concat([reverse_60, pd.DataFrame({m: tmp_60})], axis=1)
+                reverse_180 = pd.concat([reverse_180, pd.DataFrame({m: tmp_180})], axis=1)
+
+        reverse_20 = CALFUNC.del_dat_early_than(reverse_20, START_YEAR)
+        reverse_60 = CALFUNC.del_dat_early_than(reverse_60, START_YEAR)
+        reverse_180 = CALFUNC.del_dat_early_than(reverse_180, START_YEAR)
+
+        res_dict = {"Reverse_20": reverse_20,
+                    "Reverse_60": reverse_60,
+                    "Reverse_180": reverse_180,
+                    }
+
+        return res_dict
 
     @lazyproperty
     # # 估值因子
@@ -730,7 +738,7 @@ def compute_factor(status):
     # 动量类因子
     fc = Factor_Compute(status)
 
-    factor_names = [k for k in Factor_Compute.__dict__.keys() if '__' not in k]
+    factor_names = [k for k in Factor_Compute.__dict__.keys() if '_' not in k]
     for f in factor_names:
         print(f)
         if f == 'compute_pct_chg_nm':
@@ -739,7 +747,9 @@ def compute_factor(status):
         else:
             try:
                 tmp = eval('fc.' + f)
-                if isinstance(tmp, dict):
+                if not tmp:            # 返回None，表示无需更新
+                    continue
+                elif isinstance(tmp, dict):
                     for k, v in tmp.items():
                         fc.save(v, k.upper())
                 elif isinstance(tmp, pd.DataFrame):
@@ -752,8 +762,8 @@ if __name__ == "__main__":
     # compute_factor('all')
 
     # 测试某个因子
-    fc = Factor_Compute('all')
-    res = fc.is_open
+    fc = Factor_Compute('update')
+    res = fc.compute_pct_chg_nm
     res = fc.peg
     # fc.save(res, 'is_open'.upper())
     # panel_path = r'D:\pythoncode\IndexEnhancement\因子预处理模块\因子'
@@ -761,5 +771,3 @@ if __name__ == "__main__":
 
     # grossprofitmargin_q
     # grossprofitmargin_q_diff
-
-
